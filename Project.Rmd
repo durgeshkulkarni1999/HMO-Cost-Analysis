@@ -1,0 +1,156 @@
+## Project IDS##
+
+1. Loading the file in a dataframe
+```{r}
+library(tidyverse)
+dfhco<-data.frame(read_csv('C:\\SU\\IDS\\Project\\HMO_data.csv',show_col_types = FALSE))
+```
+
+2. Finding Missing values in Columns of the dataframe
+```{r}
+str(dfhco)
+sum(is.na(dfhco$X))
+sum(is.na(dfhco$age))
+sum(is.na(dfhco$bmi))#78 missing values
+sum(is.na(dfhco$children))
+sum(is.na(dfhco$hypertension))#80 missing values
+sum(is.na(dfhco$cost))
+```
+
+3. Clean up the NA's 
+```{r}
+library(imputeTS)
+dfhco$bmi<-na_interpolation(dfhco$bmi)
+dfhco$hypertension<-na_interpolation(dfhco$hypertension)
+summary(dfhco)
+```
+
+4. Creating a **expensive** column based on cost 
+```{r}
+quantile(dfhco$cost)
+#Expensive individuals will be those in the top 25% of the population which is cost greater than 4775 according to quantile function
+dfhco$expensive <- with(dfhco, ifelse(cost > 4775, 'TRUE', 'FALSE'))
+```
+5. Plotting various Histogram for numeric variables
+```{r}
+hist(dfhco$age,main="Histogram of age")
+hist(dfhco$bmi,main="Histogram of bmi")
+hist(dfhco$children,main="Histogram of children")
+hist(dfhco$hypertension,main="Histogram of hypertension")
+hist(dfhco$cost,xlim=c(1,30000),main="Histogram of cost",breaks=20)
+```
+6. Creating Box Plots for expensive and inexpensive data with respect to cost and other variables 
+```{r}
+library(ggplot2)
+Expensive <- filter(dfhco, cost > 4775)
+Inexpensive <- filter(dfhco, cost <= 4775)
+ggplot(Expensive)+aes(x=smoker,y=cost)+geom_boxplot()+ggtitle("Box Plot of Expensive data with respect to cost v/s smoker")
+ggplot(Inexpensive)+aes(x=smoker,y=cost)+geom_boxplot()+ggtitle("Box Plot of Inexpensive data with respect to cost v/s smoker")
+ggplot(Expensive)+aes(x=exercise,y=cost)+geom_boxplot()+ggtitle("Box Plot of Expensive data with respect to cost v/s excercise")
+ggplot(Inexpensive)+aes(x=exercise,y=cost)+geom_boxplot()+ggtitle("Box Plot of Inexpensive data with respect to cost v/s excersie")
+ggplot(dfhco)+aes(x=education_level,y=cost)+geom_boxplot()
+ggplot(dfhco)+aes(x=yearly_physical,y=cost)+geom_boxplot()
+```
+7. Plotting Data on US Map with color shading as per cost  
+```{r}
+library(maps)
+library(ggmap)
+library(mapproj)
+DF <- dfhco %>% group_by(location) %>% summarise(avgcost = mean(cost))
+us<- map_data("state")
+us$state_name <- tolower(us$region)
+DF$location <- tolower(DF$location)
+mappy <- merge(us,DF,by.x="state_name",by.y="location")
+mappy<-mappy %>% arrange(order)
+ggplot(mappy, aes(map_id= state_name))+aes(x=long, y=lat, group=group) +geom_polygon(aes(fill = avgcost), color = "black")+expand_limits(x=mappy$long, y=mappy$lat)+coord_map(projection = "mercator")
+```
+8. Using Association Rules to determine patterns i.e to get which other columns are more frequently appeared when cost was expensive
+
+```{r}
+library(arules)
+dfhcon<-dfhco[,-14]
+ruleset1<- apriori(dfhcon,
+ parameter=list(supp=0.09, conf=0.3),
+ control=list(verbose=F),
+ appearance=list(default="lhs",rhs=("expensive=TRUE")))
+inspect(ruleset1)
+```
+9. Creating Scatter Plot to determine distribution of data with respect to cost 
+
+```{r}
+ggplot(dfhco)+aes(x=bmi,y=cost,color=smoker)+geom_point()
+ggplot(dfhco)+aes(x=bmi,y=cost,color=exercise)+geom_point() 
+ggplot(dfhco)+aes(x=bmi,y=cost,color=yearly_physical)+geom_point()
+ggplot(dfhco)+aes(x=bmi,y=cost,color=location_type)+geom_point()
+```
+10. Genrating Barplots
+```{r}
+ggplot(dfhco)+aes(x=education_level)+geom_bar(position="dodge",aes(fill=expensive))
+ggplot(dfhco)+aes(x=children)+geom_bar(position="dodge",aes(fill=expensive))
+ggplot(dfhco)+aes(x=gender)+geom_bar(position="dodge",aes(fill=expensive))
+ggplot(dfhco)+aes(x=smoker)+geom_bar(position="dodge",aes(fill=expensive))
+ggplot(dfhco)+aes(x=age)+geom_bar(position="dodge",aes(fill=expensive))
+```
+
+11. Training Model with SVM Against the dataset
+```{r}
+set.seed(111)
+library(rio)
+library(caret)
+library(kernlab)
+dfhco$expensive<-as.factor(dfhco$expensive)
+trainList <- createDataPartition(dfhco$expensive, p=.7, list=FALSE)
+trainSet <- dfhco[trainList,]
+testSet <- dfhco[-trainList,]
+svmmodel<- train(expensive ~ X+age+bmi+children+smoker+location+location_type+education_level+yearly_physical+exercise+married+hypertension+gender,data=trainSet , method= "svmRadial", trControl=trainControl(method = "none"), preProcess=c("center","scale"))
+```
+
+12. Use predict function to validate model against the test data
+```{r}
+svmPred<-predict(svmmodel,testSet,type='raw')
+```
+
+13. Creating Confusion Matrix.
+```{r}
+confusionMatrix(svmPred,testSet$expensive)
+```
+
+14. Training Model with SVM K-fold cross validation
+```{r}
+svmmodel.kfold<- train(expensive ~ X+age+bmi+children+smoker+location+location_type+education_level+yearly_physical+exercise+married+hypertension+gender,data=trainSet , method= "svmRadial", trControl=trainControl(method = "repeatedcv",number=10), preProcess=c("center","scale"))
+```
+15. Predicting on k-fold model
+```{r}
+svmPredkfold<-predict(svmmodel.kfold,testSet,type='raw')
+```
+
+16. Creating Confusion Matrix for k-fold.
+```{r}
+confusionMatrix(svmPredkfold,testSet$expensive)
+```
+
+17. Training rpart model
+```{r}
+library(e1071)
+modelrpart<-train(expensive ~ X+age+bmi+children+smoker+location+location_type+education_level+yearly_physical+exercise+married+hypertension+gender, method = "rpart",data = trainSet)
+```
+
+18. Plotting Rpart Plot final model
+```{r}
+library(rpart.plot)
+rpart.plot(modelrpart$finalModel)
+prp(modelrpart$finalModel, faclen = 0, cex = 0.8, extra = 1)
+plot(varImp(modelrpart))
+```
+
+19. Creating Confusion Matrix To calculate accuracy
+```{r}
+rpartpred<-predict(modelrpart,testSet,type='raw')
+confusionMatrix(rpartpred,testSet$expensive)
+```
+
+20. Loading best model into rda file to save our model
+```{r}
+our_model <- modelrpart
+save(our_model, file = "our_model.rda")
+```
